@@ -89,7 +89,7 @@ int level(int size){
 // Implementera
 
 struct head *merged_flists(struct head *block, int index){
-    if(block->level == index){
+    if(block->level == index && block != NULL){
         return block;
     }
     struct head *splitted_block = split(block);
@@ -108,7 +108,6 @@ struct head *find(int index){
     
     if (flists[index] != NULL) {
         struct head *block = flists[index];
-        block->next = NULL;
         if(flists[index]->next != NULL){
             flists[index] = flists[index]->next;
             flists[index]->prev = NULL;
@@ -127,21 +126,16 @@ struct head *find(int index){
             return merged_flists(new_block, index);
         }
         if(flists[i] != NULL){
-            return merged_flists(flists[i], index);
-            //struct head *splitedBlock = split(flists[i]);
-            //splitedBlock->next = NULL;
-            //if(flists[i]->next != NULL){
-            //    flists[i] = flists[i]->next;
-            //    flists[i]->prev = NULL;
-            //}else{
-            //    flists[i] = NULL;
-            //}
-            //struct head *temp = flists[i-1];
-            //flists[i-1] = buddy(splitedBlock);
-            //flists[i-1]->next = temp;
+            struct head *new = flists[i];
+            if(flists[i]->next != NULL){
+                flists[i] = flists[i]->next;
+                flists[i]->prev = NULL;
+            }else{
+                flists[i] = NULL;
+            }
+            return merged_flists(new, index);
         }
     }
-    //return NULL;
 }
 
 
@@ -154,6 +148,22 @@ void insert_flists(struct head *block){
     }else{
         flists[block->level] = block;
     }
+    flists[block->level]->status = 0;
+    return;
+}
+
+void remove_from_flists(struct head *block){
+    if(block->prev == NULL && block->next == NULL){
+        flists[block->level] = NULL;
+        return;
+    }
+    if(block->prev == NULL && block->next != NULL){
+        flists[block->level]->next->prev = NULL;
+        flists[block->level] = flists[block->level]->next;
+        return;
+    }
+    block->next->prev = block->prev;
+    block->prev->next = block->next;
     return;
 }
 
@@ -163,6 +173,8 @@ void insert(struct head *block){
     }else{
         struct head *buddy_block = buddy(block);
         struct head *merged_block = merge(block, buddy_block);
+        remove_from_flists(buddy_block);
+
         if(merged_block->level == LEVELS-1){
             merged_block == NULL;
         }else{
@@ -210,16 +222,32 @@ void test(){
     printf("size of head is: %ld\n", sizeof(struct head));
     printf("size of head pointer is: %ld\n", sizeof(struct head*));
     printf("size of enum flag is: %ld\n", sizeof(enum flag));
-    printf("level for 20 should be 1: %d\n", level(20));
-    int *test[100];
-    for(int i = 0; i < 100; i++)
-    {
-        test[i] = balloc(sizeof(int)*4);
-        printf("Test %d: %p\n", i, test[i]);
+    printf("level for 20 should be 1: %d\n", level(1));
+    
+    int *test[10000];
+    for(int i = 0; i < 10000; i++){
+        //printf("Balloc: %d\n", i);
+        test[i] = balloc(sizeof(int));
+    }
+    for(int i = 0; i < 10000; i++){
+        //printf("Balloc: %d\n", i);
+        bfree(test[i]);
     }
     
-    bfree(test);
-    printf("Test %p", test);
+
+    //printf("Find: %d\n", find(5)->level);
+    //balloc(32);
+    //bfree(balloc(256));
+    
+    for(int i = 0; i < LEVELS; i++)
+    {
+        struct head *current = flists[i];
+        while(current != NULL){
+            printf("Level: %d Address: %p\n", i, current);
+            current = current->next;
+        }
+    }
+    
 }
 
 int main(){
