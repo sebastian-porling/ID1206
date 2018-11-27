@@ -61,6 +61,19 @@ struct head *merge(struct head* block, struct head* sibling){
         primary = block;
     }
     primary->level = primary->level + 1;
+    primary->status = Free;
+    return primary;
+}
+
+struct head *primary(struct head *block){
+    int index = block->level;
+    printf("Primary\n");
+    long int mask = 0xffffffffffffffff << (1 + index + MIN);
+    printf("Mask\n");
+    struct head *primary = (struct head*)((long int)block | mask);
+    printf("Level %d\n", block->level);
+    //primary->level = index + 1;
+    printf("Change lvl\n");
     return primary;
 }
 
@@ -105,8 +118,8 @@ struct head *merged_flists(struct head *block, int index){
 }
 
 struct head *find(int index){
-    
     if (flists[index] != NULL) {
+        
         struct head *block = flists[index];
         if(flists[index]->next != NULL){
             flists[index] = flists[index]->next;
@@ -117,13 +130,13 @@ struct head *find(int index){
         block->status = 1;
         return block;
     }
-
-    
-    for(int i = index + 1; i < LEVELS; i++)
+    for(int i = index; i < LEVELS; i++)
     {
         if(i == LEVELS-1){
             struct head *new_block = new();
-            return merged_flists(new_block, index);
+            struct head *reduced_block = merged_flists(new_block, index);
+            reduced_block->status = 1;
+            return reduced_block;
         }
         if(flists[i] != NULL){
             struct head *new = flists[i];
@@ -133,7 +146,9 @@ struct head *find(int index){
             }else{
                 flists[i] = NULL;
             }
-            return merged_flists(new, index);
+            struct head *old_reduced_block = merged_flists(new, index);
+            old_reduced_block->status = 1;
+            return old_reduced_block;
         }
     }
 }
@@ -153,31 +168,78 @@ void insert_flists(struct head *block){
 }
 
 void remove_from_flists(struct head *block){
+    //printf("###\tIn remove from flists\n");
+    //printf("###\t remove block: %p\n", block);
     if(block->prev == NULL && block->next == NULL){
+        printf("block: %p, lvl: %d, st: %d, n: %p, p: %p\n", flists[block->level], flists[block->level]->level, flists[block->level]->status, flists[block->level]->next, flists[block->level]->prev);
         flists[block->level] = NULL;
+        printf("block: %p, lvl: %d, st: %d, n: %p, p: %p\n", block, block->level, block->status, block->next, block->prev);
         return;
     }
-    if(block->prev == NULL && block->next != NULL){
-        flists[block->level]->next->prev = NULL;
+    // printf("###\t middel remove block: %p\n", block);
+    // printf("###\tMiddle remove from flists\n");
+    if((block->prev == NULL && block->next != NULL)){
+        /* printf("###\tIn if thing\n");
+        printf("###\t Next_block: %p\n", block->next);
+        printf("###\t test: %p status: %d, level: %d: \n", flists[block->level], flists[block->level]->status, flists[block->level]->level);
+        printf("###\tflist next: %p\n", flists[block->level]->next); */
+
+        flists[block->level]->next->prev = flists[block->level]->prev;
+        
+        // printf("###\tSet next prev null\n");
+        
         flists[block->level] = flists[block->level]->next;
+        
+        /* printf("###\tnew start in flists: %p\n", flists[block->level]);
+        printf("###\tSet current to next\n"); */
+        
         return;
     }
+    if(block->prev != NULL && block->next == NULL){
+        /* printf("######\tNy bajs\n");
+        printf("###\tPrev: %p, Current: %p, Next: %p\n", flists[block->level]->prev, flists[block->level], flists[block->level]->next); */
+        
+        flists[block->level] = flists[block->level]->prev;
+        
+        flists[block->level]->next = NULL;
+        
+        // printf("###\t2 Prev: %p, Current: %p, Next: %p\n", flists[block->level]->prev, flists[block->level], flists[block->level]->next);
+        
+        return;
+    } 
+    /* printf("###\tAlmost end remove from flists\n");
+    printf("###\t Next_block: %p\n", block->next);
+    printf("########\t Prev_block: %p, prevagain: %p\n", block->prev, block->prev->prev); */
     block->next->prev = block->prev;
+    // printf("###\t prev_block: %p\n", block->prev->next);
     block->prev->next = block->next;
+    // printf("###\tDone remove from flists\n");
     return;
 }
 
 void insert(struct head *block){
-    if(buddy(block)->status == Taken){
+    // printf("#\tWe look for buddy\n");
+    struct head *block_buddy = (struct head*)buddy(block);
+    // printf("#\tWe check if taken\n");
+    if(block_buddy->status == Taken){
+        // printf("#\tIs taken\n");
         insert_flists(block);
     }else{
-        struct head *buddy_block = buddy(block);
-        struct head *merged_block = merge(block, buddy_block);
-        remove_from_flists(buddy_block);
-
+        // printf("#\tNot taken, We now merge\n");
+        remove_from_flists(block_buddy);
+        struct head *merged_block = merge(block, block_buddy);
+        // printf("#\tWe remove buddy from list\n");
+        
+        // printf("#\tWe check if lvl 7\n");
         if(merged_block->level == LEVELS-1){
-            merged_block == NULL;
+            // printf("#\tWe munmap\n");
+            int err = munmap(merged_block, 4096);
+            merged_block = NULL;
+            if(err != 0){
+                printf("mmap failed: error %d\n", errno);
+            }
         }else{
+            // printf("#\tRecursion\n");
             insert(merged_block);
         }
     }
@@ -197,7 +259,9 @@ void *balloc(size_t size){
 /*  */
 void bfree(void *memory){
     if (memory != NULL) {
+        printf("#\tWe do magic\n");
         struct head *block = magic(memory);
+        printf("#\tWe insert stuff\n");
         insert(block);
     }
     return;
@@ -206,14 +270,15 @@ void bfree(void *memory){
 void test(){
     struct head* block = new();
     printf("New Level: %d, Adress: %p\n",  block->level, block);
+    printf("Hide: %p, Magic: %p\n", hide(block), magic(hide(block)));
     struct head* block2 = split(block);
     printf("Split Level: %d, Adress: %p\n",  block2->level, block2);
     struct head* block3 = buddy(block2);
     printf("Buddy Level: %d, Adress: %p\n", block3->level, block3);
-    struct head* split2 = split(block3);
-    printf("Buddy split Level: %d, Adress: %p\n",  split2->level, split2);
+    struct head* split2 = split(block2);
+    printf("split Level: %d, Adress: %p\n",  split2->level, split2);
     struct head* split2buddy = buddy(split2);
-    printf("Buddy Split buddy  Level: %d, Adress: %p\n",  split2buddy->level, split2buddy);
+    printf("Split Split buddy  Level: %d, Adress: %p\n",  split2buddy->level, split2buddy);
     struct head* mergeSplit2buddy = merge(split2, split2buddy);
     printf("Merge Buddy Split buddy  Level: %d, Adress: %p\n",  mergeSplit2buddy->level, mergeSplit2buddy);
     struct head* block6 = merge(block, block2);
@@ -222,15 +287,20 @@ void test(){
     printf("size of head is: %ld\n", sizeof(struct head));
     printf("size of head pointer is: %ld\n", sizeof(struct head*));
     printf("size of enum flag is: %ld\n", sizeof(enum flag));
-    printf("level for 20 should be 1: %d\n", level(1));
+    printf("level for 20 should be 1: %d\n", level(2048));
     
+    //printf("Balloc: %p\n", bfree(balloc(2048)));
+    //printf("Test: %d\n", ((struct head*)buddy(magic(balloc(500))))->status);
+    //int *p = balloc(500);
+    //bfree(balloc(1024));
     int *test[10000];
-    for(int i = 0; i < 10000; i++){
-        //printf("Balloc: %d\n", i);
+    for(int i = 0; i < 100; i++){
+        printf("Balloc: %d\n", i);
         test[i] = balloc(sizeof(int));
+        printf("Magic: %p", magic(test[i]));
     }
-    for(int i = 0; i < 10000; i++){
-        //printf("Balloc: %d\n", i);
+    for(int i = 0; i < 100; i++){
+        printf("Bfree: %d\n", i);
         bfree(test[i]);
     }
     
@@ -239,6 +309,17 @@ void test(){
     //balloc(32);
     //bfree(balloc(256));
     
+    for(int i = 0; i < LEVELS; i++)
+    {
+        struct head *current = flists[i];
+        while(current != NULL){
+            printf("Level: %d Address: %p\n", i, current);
+            printf("#Level: %d Address %p\n", i, current->next);
+            current = (struct head*)current->next;
+        }
+    }
+    //bfree(p);
+    printf("Remove memory\n");
     for(int i = 0; i < LEVELS; i++)
     {
         struct head *current = flists[i];
