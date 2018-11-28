@@ -161,6 +161,8 @@ void insert_flists(struct head *block){
         flists[block->level]->prev = block;
         flists[block->level] = block;
     }else{
+        block->next = NULL;
+        block->prev = NULL;
         flists[block->level] = block;
     }
     flists[block->level]->status = 0;
@@ -168,52 +170,23 @@ void insert_flists(struct head *block){
 }
 
 void remove_from_flists(struct head *block){
-    //printf("###\tIn remove from flists\n");
-    //printf("###\t remove block: %p\n", block);
     if(block->prev == NULL && block->next == NULL){
-        printf("block: %p, lvl: %d, st: %d, n: %p, p: %p\n", flists[block->level], flists[block->level]->level, flists[block->level]->status, flists[block->level]->next, flists[block->level]->prev);
         flists[block->level] = NULL;
-        printf("block: %p, lvl: %d, st: %d, n: %p, p: %p\n", block, block->level, block->status, block->next, block->prev);
+        block->next = NULL;
+        block->prev = NULL;
         return;
     }
-    // printf("###\t middel remove block: %p\n", block);
-    // printf("###\tMiddle remove from flists\n");
     if((block->prev == NULL && block->next != NULL)){
-        /* printf("###\tIn if thing\n");
-        printf("###\t Next_block: %p\n", block->next);
-        printf("###\t test: %p status: %d, level: %d: \n", flists[block->level], flists[block->level]->status, flists[block->level]->level);
-        printf("###\tflist next: %p\n", flists[block->level]->next); */
-
-        flists[block->level]->next->prev = flists[block->level]->prev;
-        
-        // printf("###\tSet next prev null\n");
-        
-        flists[block->level] = flists[block->level]->next;
-        
-        /* printf("###\tnew start in flists: %p\n", flists[block->level]);
-        printf("###\tSet current to next\n"); */
-        
+        flists[block->level] = block->next;
+        block->next->prev = NULL;
         return;
     }
     if(block->prev != NULL && block->next == NULL){
-        /* printf("######\tNy bajs\n");
-        printf("###\tPrev: %p, Current: %p, Next: %p\n", flists[block->level]->prev, flists[block->level], flists[block->level]->next); */
-        
-        flists[block->level] = flists[block->level]->prev;
-        
-        flists[block->level]->next = NULL;
-        
-        // printf("###\t2 Prev: %p, Current: %p, Next: %p\n", flists[block->level]->prev, flists[block->level], flists[block->level]->next);
-        
+        block->prev->next = NULL;
         return;
     } 
-    /* printf("###\tAlmost end remove from flists\n");
-    printf("###\t Next_block: %p\n", block->next);
-    printf("########\t Prev_block: %p, prevagain: %p\n", block->prev, block->prev->prev); */
     block->next->prev = block->prev;
-    // printf("###\t prev_block: %p\n", block->prev->next);
     block->prev->next = block->next;
-    // printf("###\tDone remove from flists\n");
     return;
 }
 
@@ -297,9 +270,9 @@ void test(){
     for(int i = 0; i < 100; i++){
         printf("Balloc: %d\n", i);
         test[i] = balloc(sizeof(int));
-        printf("Magic: %p", magic(test[i]));
     }
-    for(int i = 0; i < 100; i++){
+    
+    for(int i = 0; i < 99; i++){
         printf("Bfree: %d\n", i);
         bfree(test[i]);
     }
@@ -314,7 +287,6 @@ void test(){
         struct head *current = flists[i];
         while(current != NULL){
             printf("Level: %d Address: %p\n", i, current);
-            printf("#Level: %d Address %p\n", i, current->next);
             current = (struct head*)current->next;
         }
     }
