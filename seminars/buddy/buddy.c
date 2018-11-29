@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <time.h>
 
 /* Settings */
 #define MIN 5
@@ -20,7 +21,11 @@ struct head {
     struct head *prev;
 };
 
+/* Init the free list */
 struct head *flists[LEVELS] = {NULL};
+
+/* Init number of pages */
+int number_of_pages = 0;
 
 /* Make a new block */
 struct head *new(){
@@ -32,7 +37,13 @@ struct head *new(){
     assert(((long int)new & 0xfff) == 0);
     new->status = Free;
     new->level = LEVELS - 1;
+    number_of_pages++;
     return new;
+}
+
+/* Get the number of pages */
+int getNumberOfPages(){
+    return number_of_pages;
 }
 
 /* Find the buddy */
@@ -65,23 +76,22 @@ struct head *merge(struct head* block, struct head* sibling){
     return primary;
 }
 
-struct head *primary(struct head *block){
-    int index = block->level;
-    printf("Primary\n");
-    long int mask = 0xffffffffffffffff << (1 + index + MIN);
-    printf("Mask\n");
-    struct head *primary = (struct head*)((long int)block | mask);
-    printf("Level %d\n", block->level);
-    //primary->level = index + 1;
-    printf("Change lvl\n");
-    return primary;
+/* Finds the primary block of the given block */
+struct head *primary(struct head * block) {
+  int index = block->level;
+  long int mask = 0xffffffffffffffff << (1 + index + MIN);
+  struct head *primary = (struct head *) ((long int) block & mask);
+  primary->level = index + 1;
+  return primary;
 }
+
 
 /* Magic, hide the head structure */
 void *hide(struct head* block){
     return (void*)(block + 1);
 }
 
+/* Reveals the head structure */
 struct head *magic(void *memory){
     return ((struct head*)memory - 1);
 }
@@ -99,142 +109,164 @@ int level(int size){
     return i;
 }
 
-// Implementera
-
-struct head *merged_flists(struct head *block, int index){
-    if(block->level == index && block != NULL){
-        return block;
-    }
-    struct head *splitted_block = split(block);
-
-    if(flists[splitted_block->level] != NULL){
-        splitted_block->next = flists[splitted_block->level];
-        flists[splitted_block->level]->prev = splitted_block;
-        flists[splitted_block->level] = splitted_block;
-    }else{
-        flists[splitted_block->level] = splitted_block;
-    }
-    return merged_flists(buddy(splitted_block), index);
-}
-
-struct head *find(int index){
-    if (flists[index] != NULL) {
-        
-        struct head *block = flists[index];
-        if(flists[index]->next != NULL){
-            flists[index] = flists[index]->next;
-            flists[index]->prev = NULL;
-        }else{
-            flists[index] = NULL;
-        }
-        block->status = 1;
-        return block;
-    }
-    for(int i = index; i < LEVELS; i++)
-    {
-        if(i == LEVELS-1){
-            struct head *new_block = new();
-            struct head *reduced_block = merged_flists(new_block, index);
-            reduced_block->status = 1;
-            return reduced_block;
-        }
-        if(flists[i] != NULL){
-            struct head *new = flists[i];
-            if(flists[i]->next != NULL){
-                flists[i] = flists[i]->next;
-                flists[i]->prev = NULL;
-            }else{
-                flists[i] = NULL;
-            }
-            struct head *old_reduced_block = merged_flists(new, index);
-            old_reduced_block->status = 1;
-            return old_reduced_block;
-        }
+/* Gets the size of the given memory */
+int get_size(void *memory){
+    struct head *block = magic(memory);
+    switch(block->level){
+        case 0:
+            return 32;
+        case 1:
+            return 64;
+        case 2:
+            return 128;
+        case 3:
+            return 256;
+        case 4:
+            return 512;
+        case 5:
+            return 1024;
+        case 6:
+            return 2048;
+        case 7:
+            return 4096;
     }
 }
 
-
-
-void insert_flists(struct head *block){
-    if(flists[block->level] != NULL){
+/* Add given block to the flists */
+void add_to_flists(struct head *block) {
+    // Set block status to free
+    block->status = Free;
+    // If flists at given index is null
+    // Remove the blocks links and add it first
+    if (flists[block->level] == NULL) {
+        block->next = NULL;
+        block->prev = NULL;
+        flists[block->level] = block;
+    // Other put it first and change the links
+    }else {
         block->next = flists[block->level];
-        flists[block->level]->prev = block;
-        flists[block->level] = block;
-    }else{
-        block->next = NULL;
-        block->prev = NULL;
+        block->next->prev = block;
         flists[block->level] = block;
     }
-    flists[block->level]->status = 0;
-    return;
 }
 
-void remove_from_flists(struct head *block){
-    if(block->prev == NULL && block->next == NULL){
-        flists[block->level] = NULL;
-        block->next = NULL;
-        block->prev = NULL;
-        return;
+/* We remove from flists when we split */
+struct head *rem_from_flists(int level) {
+    struct head *block;
+    if (flists[level] == NULL) {
+        return NULL;
     }
-    if((block->prev == NULL && block->next != NULL)){
+    else if (flists[level]->next != NULL) {
+        block = flists[level];
+        flists[level]->next->prev = NULL;
+        flists[level] = flists[level]->next;
+    }
+    else {
+        block = flists[level];
+        flists[level] = NULL;
+    }
+    return block;
+}
+
+/*  Finds a block from the free list
+    If a block exists in the given level return block
+    else check higher level.
+    If the checked level is at max and it is empty
+    mapp memory.
+*/
+struct head *find(int index, int level) {
+    // If the given index of flists is empty
+    // Check if level is max, then add new page
+    // Else check one level higher.
+    if (flists[index] == NULL) {
+            if (index == LEVELS - 1) {
+                add_to_flists(new());
+                find(index, level);
+            }
+            else {
+                find(index + 1, level);
+            }
+    // If the index is not the same as the level we wanted
+    // Split the block and do find again
+    } else if (index != level) {
+            struct head *block = split(rem_from_flists(index));
+            add_to_flists(block);
+            add_to_flists(buddy(block));
+            find(index - 1, level);
+    // Else remove the block from flist and return block.
+    } else {
+            struct head *block = rem_from_flists(index);
+            block->level = index;
+            return block;
+    }
+}
+
+/* Unlinks the given block from the free list */
+void unlink_from_flists(struct head *block) {
+    // When the block is in the middle of flists
+    if (block->next != NULL && block->prev != NULL) {
+        block->prev->next = block->next;
+        block->next->prev = block->prev;
+    }
+    // When the block is at the first position in the flists
+    else if (block->next != NULL && block->prev == NULL) {
         flists[block->level] = block->next;
         block->next->prev = NULL;
-        return;
     }
-    if(block->prev != NULL && block->next == NULL){
+    // When the block is at the last position in the flists
+    else if (block->prev != NULL && block->next == NULL) {
         block->prev->next = NULL;
-        return;
-    } 
-    block->next->prev = block->prev;
-    block->prev->next = block->next;
-    return;
-}
-
-void insert(struct head *block){
-    // printf("#\tWe look for buddy\n");
-    struct head *block_buddy = (struct head*)buddy(block);
-    // printf("#\tWe check if taken\n");
-    if(block_buddy->status == Taken){
-        // printf("#\tIs taken\n");
-        insert_flists(block);
-    }else{
-        // printf("#\tNot taken, We now merge\n");
-        remove_from_flists(block_buddy);
-        struct head *merged_block = merge(block, block_buddy);
-        // printf("#\tWe remove buddy from list\n");
-        
-        // printf("#\tWe check if lvl 7\n");
-        if(merged_block->level == LEVELS-1){
-            // printf("#\tWe munmap\n");
-            int err = munmap(merged_block, 4096);
-            merged_block = NULL;
-            if(err != 0){
-                printf("mmap failed: error %d\n", errno);
-            }
-        }else{
-            // printf("#\tRecursion\n");
-            insert(merged_block);
-        }
     }
-    return;
+    // When the block is alone in flists
+    else {
+        flists[block->level] = NULL;
+    }
+    block->next = NULL;
+    block->prev = NULL;
 }
 
-/*  */
+
+/*  Inserts the block in the free list.
+    If the blocks buddy is not taken, merge and insert again.
+    If the level is at max level we will remove the mapping of memory.
+ */
+void insert(struct head * block) {
+    // Set block status to free
+    block->status = Free;
+    // Unmap memory if level is at max
+    if (block->level == LEVELS - 1) {
+        munmap(block, 4096);
+        number_of_pages--;
+    // If buddy is free merge. Else add to flists
+    }else {
+        struct head *bud = buddy(block);
+        if ((bud->status == Free) && bud->level == block->level) {
+            unlink_from_flists(bud);
+            insert(primary(block));
+        }
+        else {
+            add_to_flists(block);
+        }
+        return;
+    }
+}
+
+
+/* Allocates memory from the free list */
 void *balloc(size_t size){
     if (size == 0) {
         return NULL;
     }
     int index = level(size);
-    struct head *taken = find(index);
+    struct head *taken = find(index, index);
+    taken->status = Taken;
     return hide(taken);
 }
 
-/*  */
+/* Deallocates memory from the free list */
 void bfree(void *memory){
     if (memory != NULL) {
-        printf("#\tWe do magic\n");
         struct head *block = magic(memory);
-        printf("#\tWe insert stuff\n");
         insert(block);
     }
     return;
@@ -262,48 +294,84 @@ void test(){
     printf("size of enum flag is: %ld\n", sizeof(enum flag));
     printf("level for 20 should be 1: %d\n", level(2048));
     
-    //printf("Balloc: %p\n", bfree(balloc(2048)));
-    //printf("Test: %d\n", ((struct head*)buddy(magic(balloc(500))))->status);
-    //int *p = balloc(500);
-    //bfree(balloc(1024));
     int *test[10000];
     for(int i = 0; i < 100; i++){
         printf("Balloc: %d\n", i);
         test[i] = balloc(sizeof(int));
     }
-    
-    for(int i = 0; i < 99; i++){
+    for(int i = 0; i < LEVELS; i++)
+    {
+        struct head *current = flists[i];
+        while(current != NULL){
+            printf("Level: %d adres: %p\n", i, current);
+            current = (struct head*)current->next;
+        }
+    }
+    for(int i = 0; i < 100; i++){
         printf("Bfree: %d\n", i);
         bfree(test[i]);
     }
     
-
-    //printf("Find: %d\n", find(5)->level);
-    //balloc(32);
-    //bfree(balloc(256));
     
+    printf("remove memory\n");
     for(int i = 0; i < LEVELS; i++)
     {
         struct head *current = flists[i];
         while(current != NULL){
-            printf("Level: %d Address: %p\n", i, current);
-            current = (struct head*)current->next;
-        }
-    }
-    //bfree(p);
-    printf("Remove memory\n");
-    for(int i = 0; i < LEVELS; i++)
-    {
-        struct head *current = flists[i];
-        while(current != NULL){
-            printf("Level: %d Address: %p\n", i, current);
+            printf("Level: %d adres: %p\n", i, current);
             current = current->next;
         }
     }
-    
 }
 
-int main(){
-    test();
-    return 0;
+void test_constant(int count, int size) {
+  clock_t start, middle, end;
+  double balloc_time, bfree_time, totalt_time;
+  double malloc_time, free_time, mtotalt_time;
+  int *memory[count];
+  int i;
+
+  if(size == 0 || (size - 24) > 4096) {
+    printf("incorrect size\n\n");
+    return;
+  }
+  printf("Count: %d, Size: %d\n", count, size);
+  // BALLOC BFREE
+  start = clock();
+  for (i = 0; i < count; i++) {
+    memory[i] = balloc(size - 24);
+  }
+  printf("Efter ball\n");
+  middle = clock();
+  for (i = 0; i < count; i++) {
+    bfree(memory[i]);
+  }
+  printf("Efter bfre\n");
+  end = clock();
+  balloc_time = (((double) (middle - start)) / CLOCKS_PER_SEC) * 1000;
+  bfree_time = (((double) (end - middle)) / CLOCKS_PER_SEC) * 1000;
+  totalt_time = (((double) (end - start)) / CLOCKS_PER_SEC) * 1000;
+
+  // MALLOC FREE
+  start = clock();
+  for (i = 0; i < count; i++) {
+    memory[i] = malloc(size - 24);
+  }
+  middle = clock();
+  for (i = 0; i < count; i++) {
+    free(memory[i]);
+  }
+  end = clock();
+
+  malloc_time = (((double) (middle - start)) / CLOCKS_PER_SEC) * 1000;
+  free_time = (((double) (end - middle)) / CLOCKS_PER_SEC) * 1000;
+  mtotalt_time = (((double) (end - start)) / CLOCKS_PER_SEC) * 1000;
+  printf("balloc_time: %fms, average: %fms\n", balloc_time, balloc_time/count);
+  printf("bfree_time: %fms, average: %fms\n", bfree_time, bfree_time/count);
+  printf("totalt_time: %fms, average: %fms\n", totalt_time, totalt_time/count);
+  printf("\n");
+  printf("malloc_time: %fms, average: %fms\n", malloc_time, malloc_time/count);
+  printf("free_time: %fms, average: %fms\n", free_time, free_time/count);
+  printf("mtotalt_time: %fms, average: %fms\n", mtotalt_time, mtotalt_time/count);
+  printf("\n");
 }
